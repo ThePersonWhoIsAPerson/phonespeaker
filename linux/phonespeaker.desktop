@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=PhoneSpeaker
+Comment=Send your laptop's sound to your iPhone
+Exec=python3 @EXEC@
+Icon=phone
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=iphone;audio;speaker;stream;

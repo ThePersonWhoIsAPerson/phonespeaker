@@ -1,0 +1,52 @@
+name: Build iPhone app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ipa:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ios
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        working-directory: ios
+        run: |
+          set -o pipefail
+          xcodebuild -project PhoneSpeaker.xcodeproj -target PhoneSpeaker \
+            -configuration Release -sdk iphoneos SYMROOT="$PWD/build" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tail -n 60
+          test -d build/Release-iphoneos/PhoneSpeaker.app
+
+      - name: Package .ipa
+        working-directory: ios
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/PhoneSpeaker.app Payload/
+          zip -qry PhoneSpeaker.ipa Payload
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PhoneSpeaker-ipa
+          path: ios/PhoneSpeaker.ipa
+
+      - name: Publish to the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --yes --cleanup-tag || true
+          gh release create latest ios/PhoneSpeaker.ipa --title "PhoneSpeaker (latest build)" \
+            --notes "Built from ${GITHUB_SHA::7}. Download PhoneSpeaker.ipa and sideload it with SideStore/AltStore."

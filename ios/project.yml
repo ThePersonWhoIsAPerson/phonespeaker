@@ -1,0 +1,30 @@
+name: PhoneSpeaker
+options:
+  bundleIdPrefix: io.github.phonespeaker
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  PhoneSpeaker:
+    type: application
+    platform: iOS
+    sources: [PhoneSpeaker]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.phonespeaker.app
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGNING_ALLOWED: "NO"
+    info:
+      path: PhoneSpeaker/Info.plist
+      properties:
+        CFBundleDisplayName: PhoneSpeaker
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        NSLocalNetworkUsageDescription: PhoneSpeaker finds your laptop on Wi-Fi and receives its sound.
+        NSBonjourServices: [_phonespeaker._udp]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
