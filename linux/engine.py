@@ -418,7 +418,7 @@ class Engine:
             self._parec = subprocess.Popen(
                 ["parec", "-d", f"{SINK_NAME}.monitor", "--raw",
                  "--format=s16le", f"--rate={RATE}", f"--channels={CHANNELS}",
-                 "--latency-msec=10", "--client-name=PhoneSpeaker"],
+                 "--latency-msec=5", "--client-name=PhoneSpeaker"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, bufsize=0,
             )
         except Exception as exc:  # noqa: BLE001 - surface any setup failure to the UI

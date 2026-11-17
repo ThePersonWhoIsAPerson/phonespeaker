@@ -43,7 +43,7 @@ final class AppModel: ObservableObject {
     init() {
         let d = UserDefaults.standard
         let saved = d.double(forKey: "latencyMs")
-        latencyMs = saved > 0 ? saved : 80
+        latencyMs = saved > 0 ? saved : 40
         manualAddress = d.string(forKey: "manualAddress") ?? ""
         phoneName = d.string(forKey: "phoneName") ?? UIDevice.current.name
         if let id = d.string(forKey: "deviceId") {

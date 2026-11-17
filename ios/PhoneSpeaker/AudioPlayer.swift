@@ -11,7 +11,7 @@ final class PCMRing {
     private var writeIndex = 0
     private var count = 0                // samples queued
     private var priming = true
-    private var _targetFrames = 4800     // 100 ms at 48 kHz
+    private var _targetFrames = 1920     // 40 ms at 48 kHz
     private let lock: UnsafeMutablePointer<os_unfair_lock>
 
     private var extraFrames = 0          // added automatically after dropouts
@@ -75,7 +75,7 @@ final class PCMRing {
     /// Called on the real-time audio thread.
     ///
     /// - Keeps about `targetFrames` (+ automatic extra) queued. If the queue drifts
-    ///   more than 20 ms away (Wi-Fi bursts, or the two devices' clocks running at
+    ///   more than a quarter of the target away (Wi-Fi bursts, or the two devices' clocks running at
     ///   slightly different speeds), it plays one frame in 200 twice or skips one,
     ///   which is inaudible, instead of jumping.
     /// - If the queue runs dry it goes quiet until half the target is back (not the
@@ -90,7 +90,7 @@ final class PCMRing {
             count -= drop
         }
         if priming && count / 2 >= max(target / 2, 480) { priming = false }
-        let band = 960   // 20 ms
+        let band = max(240, target / 4)   // stay within 5 ms (or a quarter of the target)
         let scale: Float = 1.0 / 32768.0
         for f in 0..<frames {
             if priming || count < 2 {

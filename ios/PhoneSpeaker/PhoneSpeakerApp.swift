@@ -89,12 +89,12 @@ struct ContentView: View {
                 Section {
                     VStack(alignment: .leading) {
                         Text("Buffer: \(Int(model.latencyMs)) ms")
-                        Slider(value: $model.latencyMs, in: 30...300, step: 10)
+                        Slider(value: $model.latencyMs, in: 10...300, step: 5)
                     }
                 } header: {
                     Text("Delay")
                 } footer: {
-                    Text("Lower means less delay. Raise it if the sound crackles or cuts out.")
+                    Text("Lower means less delay. If the sound cuts out, the app adds a little on its own (shown as “+auto”). Bluetooth headphones add their own delay on top.")
                 }
 
                 Section {
