@@ -2,13 +2,15 @@ import Foundation
 import Network
 
 /// Talks to the PhoneSpeaker app on the laptop over UDP port 47830.
-/// Sends "PSHELLO" every second; receives "PSA1" + u32 seq + PCM packets.
+/// 1. Sends "PSJOIN\n<id>\n<name>" every second until the laptop answers
+///    PSOK (allowed) or PSDENY. PSWAIT means the laptop is asking its user.
+/// 2. Then sends "PSHELLO\n<id>" every second and receives
+///    "PSA1" + u32 seq + PCM audio packets.
 final class StreamClient {
     static let port: NWEndpoint.Port = 47830
     private static let audioMagic = Data("PSA1".utf8)
-    private static let stopMagic = Data("PSSTOP".utf8)
 
-    enum Event { case receiving, waiting, laptopStopped, failed(String) }
+    enum Event { case awaitingApproval, approved, receiving, waiting, denied, laptopStopped, failed(String) }
 
     var onEvent: ((Event) -> Void)?
 
@@ -17,6 +19,10 @@ final class StreamClient {
     private var connection: NWConnection?
     private var timer: DispatchSourceTimer?
     private var endpoint: NWEndpoint?
+    private var deviceId = ""
+    private var phoneName = ""
+    private var joined = false
+    private var toldWaiting = false
     private var expectedSeq: UInt32?
     private var lastPacket = Date.distantPast
     private var receiving = false
@@ -26,10 +32,14 @@ final class StreamClient {
 
     init(ring: PCMRing) { self.ring = ring }
 
-    func connect(to endpoint: NWEndpoint) {
+    func connect(to endpoint: NWEndpoint, deviceId: String, phoneName: String) {
         queue.async {
             self.teardown(sayBye: true)
             self.endpoint = endpoint
+            self.deviceId = deviceId
+            self.phoneName = phoneName
+            self.joined = false
+            self.toldWaiting = false
             self.packets = 0
             self.lost = 0
             self.open()
@@ -57,12 +67,11 @@ final class StreamClient {
             guard let self, let c, c === self.connection else { return }
             switch state {
             case .ready:
-                self.sendHello()
+                self.sendKeepAlive()
             case .failed(let err), .waiting(let err):
                 self.onEvent?(.failed(err.localizedDescription))
-                // Try again on the next timer tick.
                 c.cancel()
-                self.connection = nil
+                self.connection = nil      // reopened on the next tick
             default:
                 break
             }
@@ -83,19 +92,21 @@ final class StreamClient {
         }
         connection = nil
         receiving = false
+        joined = false
     }
 
     private func tick() {
         if connection == nil { open() }
-        sendHello()
+        sendKeepAlive()
         if receiving && Date().timeIntervalSince(lastPacket) > 2 {
             receiving = false
             onEvent?(.waiting)
         }
     }
 
-    private func sendHello() {
-        connection?.send(content: Data("PSHELLO".utf8), completion: .idempotent)
+    private func sendKeepAlive() {
+        let text = joined ? "PSHELLO\n\(deviceId)" : "PSJOIN\n\(deviceId)\n\(phoneName)"
+        connection?.send(content: Data(text.utf8), completion: .idempotent)
     }
 
     private func receive(on c: NWConnection) {
@@ -105,7 +116,6 @@ final class StreamClient {
             if error == nil {
                 self.receive(on: c)
             } else {
-                // e.g. laptop app not running yet: reopen on the next timer tick.
                 c.cancel()
                 self.connection = nil
             }
@@ -113,12 +123,35 @@ final class StreamClient {
     }
 
     private func handle(_ data: Data) {
-        if data.starts(with: Self.stopMagic) {
-            receiving = false
-            onEvent?(.laptopStopped)
+        if data.starts(with: Self.audioMagic), data.count > 8 {
+            handleAudio(data)
             return
         }
-        guard data.count > 8, data.starts(with: Self.audioMagic) else { return }
+        switch String(decoding: data.prefix(16), as: UTF8.self) {
+        case "PSWAIT":
+            if !toldWaiting && !joined {
+                toldWaiting = true
+                onEvent?(.awaitingApproval)
+            }
+        case "PSOK":
+            if !joined {
+                joined = true
+                onEvent?(.approved)
+            }
+        case "PSDENY":
+            teardown(sayBye: false)
+            endpoint = nil
+            onEvent?(.denied)
+        case "PSSTOP":
+            teardown(sayBye: false)
+            endpoint = nil
+            onEvent?(.laptopStopped)
+        default:
+            break
+        }
+    }
+
+    private func handleAudio(_ data: Data) {
         let seq = data.withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self)) }
         if let expected = expectedSeq {
             let gap = seq &- expected

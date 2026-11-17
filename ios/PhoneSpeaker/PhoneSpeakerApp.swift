@@ -13,6 +13,7 @@ struct PhoneSpeakerApp: App {
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @State private var showManual = false
 
     var body: some View {
         NavigationStack {
@@ -33,45 +34,56 @@ struct ContentView: View {
                     .padding(.vertical, 6)
                     if model.connectedTo != nil {
                         Button(role: .destructive) { model.disconnect() } label: {
-                            Label("Disconnect", systemImage: "xmark.circle")
+                            Label(model.isPlaying ? "Disconnect" : "Cancel", systemImage: "xmark.circle")
                         }
                     }
                 }
 
                 Section {
                     if model.laptops.isEmpty {
-                        Text("Searching… Open PhoneSpeaker on your laptop and make sure both are on the same Wi-Fi.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            ProgressView()
+                            Text("Looking for laptops… Open PhoneSpeaker on your laptop and keep both on the same Wi-Fi or hotspot.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                     ForEach(model.laptops) { laptop in
                         Button { model.connect(laptop) } label: {
                             HStack {
-                                Label(laptop.name, systemImage: "laptopcomputer")
+                                Image(systemName: "laptopcomputer")
+                                    .font(.title3)
+                                    .frame(width: 32)
+                                VStack(alignment: .leading) {
+                                    Text(laptop.name).foregroundStyle(.primary)
+                                    Text(laptop.detail).font(.caption).foregroundStyle(.secondary)
+                                }
                                 Spacer()
                                 if model.connectedTo == laptop.name {
                                     Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+                                } else {
+                                    Text("Connect").font(.callout).foregroundStyle(Color.accentColor)
                                 }
                             }
                         }
+                        .disabled(model.connectedTo != nil)
                     }
                 } header: {
-                    Text("Laptops on this Wi-Fi")
+                    HStack {
+                        Text("Nearby laptops")
+                        Spacer()
+                        if model.scanning && !model.laptops.isEmpty { ProgressView().controlSize(.mini) }
+                    }
+                } footer: {
+                    Text("Tapping a laptop asks it to connect. Accept on the laptop. Pull down to search again.")
                 }
 
                 Section {
-                    HStack {
-                        TextField("Laptop address, e.g. 192.168.1.20", text: $model.manualAddress)
-                            .keyboardType(.numbersAndPunctuation)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        Button("Connect") { model.connectManual() }
-                            .disabled(model.manualAddress.isEmpty)
-                    }
+                    TextField("Name shown on the laptop", text: $model.phoneName)
+                        .textInputAutocapitalization(.words)
+                        .autocorrectionDisabled()
                 } header: {
-                    Text("Connect by address")
-                } footer: {
-                    Text("The address is shown in the PhoneSpeaker window on your laptop.")
+                    Text("This iPhone's name")
                 }
 
                 Section {
@@ -84,7 +96,24 @@ struct ContentView: View {
                 } footer: {
                     Text("Lower means less delay. Raise it if the sound crackles or cuts out.")
                 }
+
+                Section {
+                    DisclosureGroup("Can't find your laptop?", isExpanded: $showManual) {
+                        HStack {
+                            TextField("Address, e.g. 192.168.1.20", text: $model.manualAddress)
+                                .keyboardType(.numbersAndPunctuation)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            Button("Connect") { model.connectManual() }
+                                .disabled(model.manualAddress.isEmpty || model.connectedTo != nil)
+                        }
+                        Text("The address is under “Laptop address” in the PhoneSpeaker window on your laptop. Also check Settings → PhoneSpeaker → Local Network is on.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
+            .refreshable { await model.scanNow() }
             .navigationTitle("PhoneSpeaker")
         }
     }

@@ -6,18 +6,24 @@ Play your laptop's sound on your iPhone. While it's on, the laptop speakers stay
 
     ./linux/install.sh
 
-Open **PhoneSpeaker** from the app menu and press **Send sound to iPhone**.
-Press **Stop** (or close the window) to get sound back on the laptop.
+Open **PhoneSpeaker** from the app menu. While it runs (closing the window keeps
+it running in the background; quit from the ☰ menu), iPhones on the same network
+can find the laptop and ask to join. You get an **Allow / Deny** prompt; tick
+**Always allow** to skip it next time. Sound moves to the iPhone when it joins and
+comes back to the laptop when it disconnects. Turn on **Start when I log in** so
+it's always ready.
 
 ## iPhone
 
 1. Download `PhoneSpeaker.ipa` from this repo's **Releases → latest** page
    (built automatically by GitHub Actions on every push).
 2. Sideload it with SideStore or AltStore.
-3. Open it, allow **Local Network** access, and tap your laptop in the list
-   (or type the address shown in the laptop window).
+3. Open it and allow **Local Network** access. Laptops running PhoneSpeaker appear
+   in **Nearby laptops** on their own. Tap one, then accept on the laptop.
 
-Both devices must be on the same Wi-Fi.
+Both devices must be on the same Wi-Fi, or the laptop on the iPhone's Personal
+Hotspot. The iPhone finds laptops with Bonjour and by asking every address on its
+local networks, so it works on hotspots where Bonjour doesn't.
 
 ## How it works
 
