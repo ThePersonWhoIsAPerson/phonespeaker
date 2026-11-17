@@ -6,6 +6,10 @@ Play your laptop's sound on your iPhone. While it's on, the laptop speakers stay
 
     ./linux/install.sh
 
+If your firewall is on (CachyOS enables ufw by default), let iPhones reach it:
+
+    sudo ufw allow 47830/udp comment PhoneSpeaker
+
 Open **PhoneSpeaker** from the app menu. While it runs (closing the window keeps
 it running in the background; quit from the ☰ menu), iPhones on the same network
 can find the laptop and ask to join. You get an **Allow / Deny** prompt; tick
