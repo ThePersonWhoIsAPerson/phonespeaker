@@ -16,7 +16,9 @@ Protocol (UDP, text fields separated by newlines):
   laptop -> phone  : PSSTOP                      laptop ended the session
   laptop -> phone  : b"PSA1" + u32 sequence (big endian) + PCM
                      PCM = 48 kHz, stereo, signed 16-bit little endian,
-                     240 frames (5 ms, 960 bytes) per packet
+                     240 frames (5 ms, 960 bytes) per packet.
+                     Every packet is sent twice, the copy 10 ms later, so a
+                     packet lost on Wi-Fi can be recovered from its copy.
 """
 
 from __future__ import annotations
@@ -41,6 +43,7 @@ FRAMES_PER_PACKET = 240
 BYTES_PER_PACKET = FRAMES_PER_PACKET * CHANNELS * 2
 MAGIC = b"PSA1"
 CLIENT_TIMEOUT = 5.0
+REDUNDANCY_DELAY = 2   # packets between a packet and its duplicate
 DENY_COOLDOWN = 30.0
 PENDING_TIMEOUT = 60.0
 SERVICE_TYPE = "_phonespeaker._udp"
@@ -87,15 +90,17 @@ def _sink_index(name: str) -> str | None:
     return None
 
 
-def _move_strays_to(sink: str) -> None:
-    """Pull streams that remembered another output (e.g. speakers) onto `sink`."""
+def _move_strays_to(sink: str) -> bool:
+    """Pull streams that remembered another output (e.g. speakers) onto `sink`.
+    Returns False if `sink` no longer exists."""
     target = _sink_index(sink)
     if target is None:
-        return
+        return False
     for line in _pactl("list", "short", "sink-inputs").splitlines():
         parts = line.split("\t")
         if len(parts) >= 2 and parts[1] != target:
             subprocess.run(["pactl", "move-sink-input", parts[0], sink], capture_output=True)
+    return True
 
 
 def cleanup_stale_sink() -> None:
@@ -165,7 +170,6 @@ class Engine:
         self._threads: list[threading.Thread] = []
         self._audio_thread: threading.Thread | None = None
         self._load_config()
-        cleanup_stale_sink()
 
     # ---------- settings ----------
     def _load_config(self) -> None:
@@ -196,6 +200,7 @@ class Engine:
             self._sock = None
             self.on_change()
             return
+        cleanup_stale_sink()   # only now: we own the port, so no other copy is running
         if shutil.which("avahi-publish"):
             self._avahi = subprocess.Popen(
                 ["avahi-publish", "-s", f"PhoneSpeaker on {self.name}", SERVICE_TYPE, str(PORT)],
@@ -387,7 +392,11 @@ class Engine:
             if self.audio_on and now - last_sweep > 1.0:
                 last_sweep = now
                 try:
-                    _move_strays_to(SINK_NAME)
+                    if not _move_strays_to(SINK_NAME):
+                        # Our output vanished (e.g. PipeWire restarted): rebuild it.
+                        self._stop_audio()
+                        self._start_audio()
+                        changed = True
                 except (OSError, subprocess.CalledProcessError):
                     pass
             if changed:
@@ -448,6 +457,7 @@ class Engine:
         seq = 0
         assert proc.stdout
         buf = bytearray()
+        history: list[bytes] = []
         while self.audio_on:
             chunk = proc.stdout.read(BYTES_PER_PACKET - len(buf))
             if not chunk:
@@ -461,7 +471,13 @@ class Engine:
             packet = MAGIC + struct.pack(">I", seq) + bytes(buf)
             buf.clear()
             seq = (seq + 1) & 0xFFFFFFFF
+            # Send each packet twice: now, and again two packets (10 ms) later.
+            # If Wi-Fi drops one copy, the iPhone uses the other.
+            history.append(packet)
+            resend = history.pop(0) if len(history) > REDUNDANCY_DELAY else None
             with self._lock:
                 targets = [c.addr for c in self.clients.values()]
             for addr in targets:
                 self._send(packet, addr)
+                if resend:
+                    self._send(resend, addr)

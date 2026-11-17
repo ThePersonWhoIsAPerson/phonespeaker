@@ -14,7 +14,17 @@ final class PCMRing {
     private var _targetFrames = 4800     // 100 ms at 48 kHz
     private let lock: UnsafeMutablePointer<os_unfair_lock>
 
+    private var extraFrames = 0          // added automatically after dropouts
+    private var cleanFrames = 0          // frames played since the last dropout
+    private var driftCounter = 0
+
     private(set) var underruns = 0
+
+    /// Extra buffering added automatically because of dropouts, in ms.
+    var autoExtraMs: Int {
+        os_unfair_lock_lock(lock); defer { os_unfair_lock_unlock(lock) }
+        return extraFrames / 48
+    }
 
     init(seconds: Double = 2.0) {
         capacity = Int(48_000 * seconds) * 2
@@ -38,6 +48,7 @@ final class PCMRing {
     func reset() {
         os_unfair_lock_lock(lock)
         readIndex = 0; writeIndex = 0; count = 0; priming = true
+        extraFrames = 0; cleanFrames = 0; driftCounter = 0
         os_unfair_lock_unlock(lock)
     }
 
@@ -62,31 +73,63 @@ final class PCMRing {
     }
 
     /// Called on the real-time audio thread.
+    ///
+    /// - Keeps about `targetFrames` (+ automatic extra) queued. If the queue drifts
+    ///   more than 20 ms away (Wi-Fi bursts, or the two devices' clocks running at
+    ///   slightly different speeds), it plays one frame in 200 twice or skips one,
+    ///   which is inaudible, instead of jumping.
+    /// - If the queue runs dry it goes quiet until half the target is back (not the
+    ///   whole target, so the gap is short) and adds 20 ms to the target so it
+    ///   doesn't keep happening. That extra shrinks again after a clean minute.
     func render(frames: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>?) {
         os_unfair_lock_lock(lock)
-        let target = _targetFrames
-        // Too much queued (e.g. after a Wi-Fi stall): skip ahead to keep latency low.
-        let maxFrames = target + max(2400, target / 2)
-        if count / 2 > maxFrames {
+        let target = _targetFrames + extraFrames
+        if count / 2 > target + 12_000 {     // way too much queued (long stall): jump ahead
             let drop = (count / 2 - target) * 2
             readIndex = (readIndex + drop) % capacity
             count -= drop
         }
-        if priming && count / 2 >= target { priming = false }
+        if priming && count / 2 >= max(target / 2, 480) { priming = false }
+        let band = 960   // 20 ms
         let scale: Float = 1.0 / 32768.0
         for f in 0..<frames {
             if priming || count < 2 {
-                if !priming { priming = true; underruns += 1 }
+                if !priming {
+                    priming = true
+                    underruns += 1
+                    extraFrames = min(extraFrames + 960, 9_600)
+                    cleanFrames = 0
+                }
                 left[f] = 0
                 right?[f] = 0
                 continue
             }
+            driftCounter += 1
+            var advance = true
+            if driftCounter >= 200 {
+                let queued = count / 2
+                if queued > target + band && count >= 4 {
+                    readIndex = (readIndex + 2) % capacity   // skip one frame
+                    count -= 2
+                    driftCounter = 0
+                } else if queued < target - band {
+                    advance = false                          // play this frame twice
+                    driftCounter = 0
+                }
+            }
             let l = storage[readIndex]
             let r = storage[readIndex + 1]
-            readIndex = (readIndex + 2) % capacity
-            count -= 2
+            if advance {
+                readIndex = (readIndex + 2) % capacity
+                count -= 2
+            }
             left[f] = Float(l) * scale
             right?[f] = Float(r) * scale
+        }
+        cleanFrames += frames
+        if cleanFrames > 48_000 * 60 && extraFrames > 0 {
+            extraFrames = max(0, extraFrames - 480)
+            cleanFrames = 0
         }
         os_unfair_lock_unlock(lock)
     }

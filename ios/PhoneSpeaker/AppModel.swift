@@ -192,6 +192,8 @@ final class AppModel: ObservableObject {
     private func updateStats() {
         guard isPlaying else { stats = ""; return }
         let buffered = player.ring.queuedFrames / 48
-        stats = "Delay ≈ \(buffered + player.outputLatencyMs) ms · lost \(client.lost) · dropouts \(player.ring.underruns)"
+        let auto = player.ring.autoExtraMs
+        stats = "Delay ≈ \(buffered + player.outputLatencyMs) ms" + (auto > 0 ? " (+\(auto) auto)" : "")
+            + " · lost \(client.lost) · dropouts \(player.ring.underruns)"
     }
 }

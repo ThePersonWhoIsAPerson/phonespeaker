@@ -23,7 +23,10 @@ final class StreamClient {
     private var phoneName = ""
     private var joined = false
     private var toldWaiting = false
-    private var expectedSeq: UInt32?
+    private var nextSeq: UInt32?
+    private var pending: [UInt32: Data] = [:]   // seq -> PCM, waiting to be played in order
+    private var lastPCM: Data?
+    private static let reorderWindow: UInt32 = 3   // wait up to 3 packets (15 ms) for a late one
     private var lastPacket = Date.distantPast
     private var receiving = false
 
@@ -77,7 +80,9 @@ final class StreamClient {
             }
         }
         connection = c
-        expectedSeq = nil
+        nextSeq = nil
+        pending.removeAll()
+        lastPCM = nil
         receiving = false
         c.start(queue: queue)
         receive(on: c)
@@ -153,18 +158,62 @@ final class StreamClient {
 
     private func handleAudio(_ data: Data) {
         let seq = data.withUnsafeBytes { UInt32(bigEndian: $0.loadUnaligned(fromByteOffset: 4, as: UInt32.self)) }
-        if let expected = expectedSeq {
-            let gap = seq &- expected
-            if gap > 0x8000_0000 { return }           // late / duplicate packet: drop it
-            if gap > 0 { lost += Int(min(gap, 1000)) }
-        }
-        expectedSeq = seq &+ 1
-        packets += 1
+        let pcm = data.subdata(in: 8..<data.count)
         lastPacket = Date()
-        ring.write(data, offset: 8)
         if !receiving {
             receiving = true
             onEvent?(.receiving)
         }
+        if let next = nextSeq {
+            let ahead = seq &- next
+            if ahead >= 0x8000_0000 {
+                // Already played (usually the duplicate copy). A big jump back means
+                // the laptop restarted its stream: follow it.
+                if next &- seq < 400 { return }
+                pending.removeAll()
+                nextSeq = seq
+            } else if ahead > 400 {
+                pending.removeAll()      // long stall: start again from here
+                nextSeq = seq
+            }
+        } else {
+            nextSeq = seq
+        }
+        if pending[seq] == nil {
+            pending[seq] = pcm
+            packets += 1
+        }
+        flush()
+    }
+
+    /// Hand packets to the player in order. A packet that is still missing once
+    /// newer ones are `reorderWindow` ahead is lost: play a quieter copy of the
+    /// previous one instead of a click.
+    private func flush() {
+        guard var next = nextSeq else { return }
+        while true {
+            if let pcm = pending.removeValue(forKey: next) {
+                ring.write(pcm, offset: 0)
+                lastPCM = pcm
+            } else if let newest = pending.keys.map({ $0 &- next }).max(), newest >= Self.reorderWindow {
+                lost += 1
+                if let last = lastPCM { ring.write(Self.softened(last), offset: 0) }
+            } else {
+                break
+            }
+            next = next &+ 1
+        }
+        nextSeq = next
+    }
+
+    private static func softened(_ pcm: Data) -> Data {
+        var out = pcm
+        out.withUnsafeMutableBytes { raw in
+            for i in 0..<(raw.count / 2) {
+                let v = Int16(littleEndian: raw.loadUnaligned(fromByteOffset: i * 2, as: Int16.self))
+                raw.storeBytes(of: (v / 2).littleEndian, toByteOffset: i * 2, as: Int16.self)
+            }
+        }
+        return out
     }
 }
